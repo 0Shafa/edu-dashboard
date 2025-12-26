@@ -1,33 +1,40 @@
+import os
 import re
-import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
+import gdown
 
-# ---------- Page ----------
 st.set_page_config(page_title="Education Indicators Dashboard", layout="wide")
 st.title("Education Indicators Dashboard")
 
-# Altair default: limit rows; disable so it works with larger data
 alt.data_transformers.disable_max_rows()
 
-# ---------- Load + reshape ----------
-@st.cache_data
-def load_edstats(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
+# -------------------- Download + Load --------------------
+@st.cache_data(show_spinner=True)
+def download_from_drive(file_id: str, out_path: str) -> str:
+    # gdown handles big files and Drive confirm pages
+    url = f"https://drive.google.com/uc?id={file_id}"
+    if not os.path.exists(out_path):
+        gdown.download(url, out_path, quiet=False)
+    return out_path
 
-    # Detect year columns like "1970"..."2015"
-    year_cols = [c for c in df.columns if re.fullmatch(r"\d{4}", str(c))]
-    # Keep only 1970–2015
-    year_cols = [c for c in year_cols if 1970 <= int(c) <= 2015]
-    year_cols = sorted(year_cols, key=lambda x: int(x))
+@st.cache_data(show_spinner=True)
+def load_edstats(local_csv_path: str) -> pd.DataFrame:
+    df = pd.read_csv(local_csv_path)
 
     required_cols = ["Country Name", "Country Code", "Indicator Name", "Indicator Code"]
     missing_required = [c for c in required_cols if c not in df.columns]
     if missing_required:
-        raise ValueError(f"Missing columns in CSV: {missing_required}")
+        st.error(f"Loaded file does not look like EdStatsData.csv. Missing: {missing_required}")
+        st.write("Columns found (first 50):", list(df.columns)[:50])
+        st.stop()
 
-    # Wide -> long
+    # Detect year columns like 1970..2015
+    year_cols = [c for c in df.columns if re.fullmatch(r"\d{4}", str(c))]
+    year_cols = [c for c in year_cols if 1970 <= int(c) <= 2015]
+    year_cols = sorted(year_cols, key=lambda x: int(x))
+
     long_df = df[required_cols + year_cols].melt(
         id_vars=required_cols,
         value_vars=year_cols,
@@ -35,29 +42,20 @@ def load_edstats(path: str) -> pd.DataFrame:
         value_name="Value",
     )
 
-    long_df["Year"] = pd.to_numeric(long_df["Year"], errors="coerce").astype("Int64")
-
-    # Convert values, treat ".." and non-numeric as missing
+    long_df["Year"] = pd.to_numeric(long_df["Year"], errors="coerce")
     long_df["Value"] = pd.to_numeric(long_df["Value"], errors="coerce")
-
     long_df["Missing"] = long_df["Value"].isna()
-
-    # Drop rows with no year (safety)
     long_df = long_df.dropna(subset=["Year"])
     long_df["Year"] = long_df["Year"].astype(int)
-
     return long_df
 
+# -------------------- IMPORTANT --------------------
+# Put your EdStatsData.csv file id here
+FILE_ID = "1xUH-nEyU-yTTvrgr5f1xQ0izhCHo3JAo"  # from your link
+LOCAL_PATH = "EdStatsData.csv"
 
-# ---------- Input ----------
-# Put your CSV in the same folder as app.py, or update this path
-CSV_URL = "https://drive.google.com/uc?export=download&id=1xUH-nEyU-yTTvrgr5f1xQ0izhCHo3JAo"
-
-try:
-    data = load_edstats(CSV_URL)
-except Exception as e:
-    st.error(f"Could not load CSV from Google Drive. Details: {e}")
-    st.stop()
+csv_path = download_from_drive(FILE_ID, LOCAL_PATH)
+data = load_edstats(csv_path)
 
 
 # ---------- Sidebar filters ----------
